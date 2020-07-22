@@ -14,8 +14,13 @@ import (
 	"github.com/flexkube/libflexkube/pkg/host/transport/direct"
 )
 
-// Create()
-func TestHostConfiguredContainerDeployConfigFile(t *testing.T) {
+const (
+	// containerRunningDelay is how long we wait for container to start and report as running by Docker.
+	containerRunningDelay = 3 * time.Second
+)
+
+// Create() tests.
+func TestHostConfiguredContainerDeployConfigFile(t *testing.T) { //nolint:funlen
 	p := "/tmp/foo"
 	f := path.Join(p, randomContainerName())
 
@@ -66,14 +71,68 @@ func TestHostConfiguredContainerDeployConfigFile(t *testing.T) {
 	}
 
 	// Sleep a bit, to make sure container starts etc.
-	time.Sleep(3 * time.Second)
+	time.Sleep(containerRunningDelay)
 
 	if err = hcc.Status(); err != nil {
 		t.Fatalf("Checking host configured container status should succeed, got: %v", err)
 	}
 
-	if hcc.container.Status.Status != "running" {
-		t.Errorf("Host configured container should be running, got status %v", hcc.container.Status.Status)
+	s := hcc.(*hostConfiguredContainer).container.Status().Status
+	if s != "running" {
+		t.Errorf("Host configured container should be running, got status %v", s)
+	}
+
+	if err = hcc.Stop(); err != nil {
+		t.Errorf("Stopping host configured container status should succeed, got: %v", err)
+	}
+
+	if err = hcc.Delete(); err != nil {
+		t.Fatalf("Deleting host configured container status should succeed, got: %v", err)
+	}
+}
+
+func TestHostConfiguredContainerPostStartHook(t *testing.T) {
+	hookCalled := false
+
+	f := Hook(func() error {
+		hookCalled = true
+
+		return nil
+	})
+
+	h := &HostConfiguredContainer{
+		Host: host.Host{
+			DirectConfig: &direct.Config{},
+		},
+		Container: Container{
+			Runtime: RuntimeConfig{
+				Docker: &docker.Config{},
+			},
+			Config: types.ContainerConfig{
+				Name:  "foo",
+				Image: "busybox:latest",
+			},
+		},
+		Hooks: &Hooks{
+			PostStart: &f,
+		},
+	}
+
+	hcc, err := h.New()
+	if err != nil {
+		t.Fatalf("Initializing host configured container should succeed, got: %v", err)
+	}
+
+	if err = hcc.Create(); err != nil {
+		t.Fatalf("Creating host configured container should succeed, got: %v", err)
+	}
+
+	if err = hcc.Start(); err != nil {
+		t.Fatalf("Starting host configured container should succeed, got: %v", err)
+	}
+
+	if !hookCalled {
+		t.Errorf("PostStart hook should be called")
 	}
 
 	if err = hcc.Stop(); err != nil {

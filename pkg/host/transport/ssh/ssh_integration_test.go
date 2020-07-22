@@ -30,7 +30,7 @@ func TestPasswordAuth(t *testing.T) {
 		ConnectionTimeout: "5s",
 		RetryTimeout:      "5s",
 		RetryInterval:     "1s",
-		Port:              22,
+		Port:              Port,
 		Password:          strings.TrimSpace(string(pass)),
 	}
 
@@ -39,7 +39,7 @@ func TestPasswordAuth(t *testing.T) {
 		t.Fatalf("creating new SSH object should succeed, got: %v", err)
 	}
 
-	if _, err := (s.(*ssh)).connect(); err != nil {
+	if _, err := s.Connect(); err != nil {
 		t.Fatalf("connecting should succeed, got: %v", err)
 	}
 }
@@ -51,7 +51,7 @@ func TestPasswordAuthFail(t *testing.T) {
 		ConnectionTimeout: "5s",
 		RetryTimeout:      "5s",
 		RetryInterval:     "1s",
-		Port:              22,
+		Port:              Port,
 		Password:          "badpassword",
 	}
 
@@ -60,7 +60,7 @@ func TestPasswordAuthFail(t *testing.T) {
 		t.Fatalf("creating new SSH object should succeed, got: %v", err)
 	}
 
-	if _, err := (s.(*ssh)).connect(); err == nil {
+	if _, err := s.Connect(); err == nil {
 		t.Fatalf("connecting with bad password should fail")
 	}
 }
@@ -68,12 +68,12 @@ func TestPasswordAuthFail(t *testing.T) {
 func TestPrivateKeyAuth(t *testing.T) {
 	s := withPrivateKey(t)
 
-	if _, err := (s.(*ssh)).connect(); err != nil {
+	if _, err := s.Connect(); err != nil {
 		t.Fatalf("connecting should succeed, got: %v", err)
 	}
 }
 
-func withPrivateKey(t *testing.T) transport.Transport {
+func withPrivateKey(t *testing.T) transport.Interface {
 	key, err := ioutil.ReadFile("/home/core/.ssh/id_rsa")
 	if err != nil {
 		t.Fatalf("reading SSH private key shouldn't fail, got: %v", err)
@@ -85,7 +85,7 @@ func withPrivateKey(t *testing.T) transport.Transport {
 		ConnectionTimeout: "5s",
 		RetryTimeout:      "5s",
 		RetryInterval:     "1s",
-		Port:              22,
+		Port:              Port,
 		PrivateKey:        string(key),
 	}
 
@@ -97,12 +97,17 @@ func withPrivateKey(t *testing.T) transport.Transport {
 	return ssh
 }
 
-func TestForwardUnixSocket(t *testing.T) {
+func TestForwardUnixSocketFull(t *testing.T) {
 	ssh := withPrivateKey(t)
 	expectedMessage := "foo"
 	expectedResponse := "bar"
 
-	s, err := ssh.ForwardUnixSocket(fmt.Sprintf("unix://%s", testServerAddr))
+	c, err := ssh.Connect()
+	if err != nil {
+		t.Fatalf("Connecting should succeed, got: %v", err)
+	}
+
+	s, err := c.ForwardUnixSocket(fmt.Sprintf("unix://%s", testServerAddr))
 	if err != nil {
 		t.Fatalf("forwarding should succeed, got: %v", err)
 	}
@@ -128,7 +133,7 @@ func TestForwardUnixSocket(t *testing.T) {
 	}
 }
 
-func runServer(t *testing.T, expectedMessage string, response string) {
+func runServer(t *testing.T, expectedMessage, response string) {
 	l, err := net.Listen("unix", testServerAddr)
 	if err != nil {
 		// Can't use t.Fatalf from go routine. use fmt.Printf + t.Fail() instead
@@ -138,11 +143,9 @@ func runServer(t *testing.T, expectedMessage string, response string) {
 		t.Fail()
 	}
 
-	defer l.Close()
-
 	// We may SSH into host as unprivileged user, so make sure we are allowed to access the
 	// socket file.
-	if err := os.Chmod(testServerAddr, 0777); err != nil {
+	if err := os.Chmod(testServerAddr, 0o600); err != nil {
 		fmt.Printf("socket chmod should succeed, got: %v\n", err)
 		t.Fail()
 	}
@@ -152,8 +155,6 @@ func runServer(t *testing.T, expectedMessage string, response string) {
 		fmt.Printf("accepting connection should succeed, got: %v\n", err)
 		t.Fail()
 	}
-
-	defer conn.Close()
 
 	buf := make([]byte, 1024)
 
@@ -171,5 +172,13 @@ func runServer(t *testing.T, expectedMessage string, response string) {
 	if _, err := conn.Write([]byte(response)); err != nil {
 		fmt.Printf("writing response should succeed, got: %v\n", err)
 		t.Fail()
+	}
+
+	if err := conn.Close(); err != nil {
+		t.Logf("failed closing connection: %v", err)
+	}
+
+	if err := l.Close(); err != nil {
+		t.Logf("failed closing local listener: %v", err)
 	}
 }

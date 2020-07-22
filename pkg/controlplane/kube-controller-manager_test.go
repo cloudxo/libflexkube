@@ -3,142 +3,104 @@ package controlplane
 import (
 	"testing"
 
+	"github.com/flexkube/libflexkube/internal/utiltest"
 	"github.com/flexkube/libflexkube/pkg/host"
 	"github.com/flexkube/libflexkube/pkg/host/transport/direct"
+	"github.com/flexkube/libflexkube/pkg/kubernetes/client"
+	"github.com/flexkube/libflexkube/pkg/types"
 )
 
-const (
-	nonEmptyString = "foo"
-)
-
-func TestKubeControllerManagerValidate(t *testing.T) {
+func TestKubeControllerManagerValidate(t *testing.T) { //nolint:funlen
 	hostConfig := &host.Host{
 		DirectConfig: &direct.Config{},
+	}
+
+	pki := utiltest.GeneratePKI(t)
+
+	kubeconfig := client.Config{
+		Server:            "localhost",
+		CACertificate:     types.Certificate(pki.Certificate),
+		ClientCertificate: types.Certificate(pki.Certificate),
+		ClientKey:         types.PrivateKey(pki.PrivateKey),
+	}
+
+	common := &Common{
+		KubernetesCACertificate: types.Certificate(pki.Certificate),
+		FrontProxyCACertificate: types.Certificate(pki.Certificate),
 	}
 
 	cases := map[string]struct {
 		Config *KubeControllerManager
 		Error  bool
 	}{
-		"require KubernetesCACertificate": {
+		"require Kubeconfig": {
 			Config: &KubeControllerManager{
-				KubernetesCAKey:          nonEmptyString,
-				ServiceAccountPrivateKey: nonEmptyString,
-				APIServer:                nonEmptyString,
-				ClientCertificate:        nonEmptyString,
-				ClientKey:                nonEmptyString,
-				RootCACertificate:        nonEmptyString,
+				KubernetesCAKey:          types.PrivateKey(pki.PrivateKey),
+				ServiceAccountPrivateKey: types.PrivateKey(pki.PrivateKey),
+				RootCACertificate:        types.Certificate(pki.Certificate),
 				Host:                     hostConfig,
+				Common:                   common,
 			},
 			Error: true,
 		},
 		"require KubernetesCAKey": {
 			Config: &KubeControllerManager{
-				KubernetesCACertificate:  nonEmptyString,
-				ServiceAccountPrivateKey: nonEmptyString,
-				APIServer:                nonEmptyString,
-				ClientCertificate:        nonEmptyString,
-				ClientKey:                nonEmptyString,
-				RootCACertificate:        nonEmptyString,
+				ServiceAccountPrivateKey: types.PrivateKey(pki.PrivateKey),
+				RootCACertificate:        types.Certificate(pki.Certificate),
 				Host:                     hostConfig,
+				Kubeconfig:               kubeconfig,
+				Common:                   common,
 			},
 			Error: true,
 		},
 		"require ServiceAccountPrivateKey": {
 			Config: &KubeControllerManager{
-				KubernetesCACertificate: nonEmptyString,
-				KubernetesCAKey:         nonEmptyString,
-				APIServer:               nonEmptyString,
-				ClientCertificate:       nonEmptyString,
-				ClientKey:               nonEmptyString,
-				RootCACertificate:       nonEmptyString,
-				Host:                    hostConfig,
-			},
-			Error: true,
-		},
-		"require APIServer": {
-			Config: &KubeControllerManager{
-				KubernetesCACertificate:  nonEmptyString,
-				KubernetesCAKey:          nonEmptyString,
-				ServiceAccountPrivateKey: nonEmptyString,
-				ClientCertificate:        nonEmptyString,
-				ClientKey:                nonEmptyString,
-				RootCACertificate:        nonEmptyString,
-				Host:                     hostConfig,
-			},
-			Error: true,
-		},
-		"require ClientCertificate": {
-			Config: &KubeControllerManager{
-				KubernetesCACertificate:  nonEmptyString,
-				KubernetesCAKey:          nonEmptyString,
-				ServiceAccountPrivateKey: nonEmptyString,
-				APIServer:                nonEmptyString,
-				ClientKey:                nonEmptyString,
-				RootCACertificate:        nonEmptyString,
-				Host:                     hostConfig,
-			},
-			Error: true,
-		},
-		"require ClientKey": {
-			Config: &KubeControllerManager{
-				KubernetesCACertificate:  nonEmptyString,
-				KubernetesCAKey:          nonEmptyString,
-				ServiceAccountPrivateKey: nonEmptyString,
-				APIServer:                nonEmptyString,
-				ClientCertificate:        nonEmptyString,
-				RootCACertificate:        nonEmptyString,
-				Host:                     hostConfig,
+				KubernetesCAKey:   types.PrivateKey(pki.PrivateKey),
+				RootCACertificate: types.Certificate(pki.Certificate),
+				Host:              hostConfig,
+				Kubeconfig:        kubeconfig,
+				Common:            common,
 			},
 			Error: true,
 		},
 		"require RootCACertificate": {
 			Config: &KubeControllerManager{
-				KubernetesCACertificate:  nonEmptyString,
-				KubernetesCAKey:          nonEmptyString,
-				ServiceAccountPrivateKey: nonEmptyString,
-				APIServer:                nonEmptyString,
-				ClientCertificate:        nonEmptyString,
-				ClientKey:                nonEmptyString,
+				KubernetesCAKey:          types.PrivateKey(pki.PrivateKey),
+				ServiceAccountPrivateKey: types.PrivateKey(pki.PrivateKey),
 				Host:                     hostConfig,
+				Kubeconfig:               kubeconfig,
+				Common:                   common,
 			},
 			Error: true,
 		},
 		"no host": {
 			Config: &KubeControllerManager{
-				KubernetesCACertificate:  nonEmptyString,
-				KubernetesCAKey:          nonEmptyString,
-				ServiceAccountPrivateKey: nonEmptyString,
-				APIServer:                nonEmptyString,
-				ClientCertificate:        nonEmptyString,
-				ClientKey:                nonEmptyString,
-				RootCACertificate:        nonEmptyString,
+				KubernetesCAKey:          types.PrivateKey(pki.PrivateKey),
+				ServiceAccountPrivateKey: types.PrivateKey(pki.PrivateKey),
+				RootCACertificate:        types.Certificate(pki.Certificate),
+				Kubeconfig:               kubeconfig,
+				Common:                   common,
 			},
 			Error: true,
 		},
 		"bad host": {
 			Config: &KubeControllerManager{
-				KubernetesCACertificate:  nonEmptyString,
-				KubernetesCAKey:          nonEmptyString,
-				ServiceAccountPrivateKey: nonEmptyString,
-				APIServer:                nonEmptyString,
-				ClientCertificate:        nonEmptyString,
-				ClientKey:                nonEmptyString,
-				RootCACertificate:        nonEmptyString,
+				KubernetesCAKey:          types.PrivateKey(pki.PrivateKey),
+				ServiceAccountPrivateKey: types.PrivateKey(pki.PrivateKey),
+				RootCACertificate:        types.Certificate(pki.Certificate),
+				Kubeconfig:               kubeconfig,
 				Host:                     &host.Host{},
 			},
 			Error: true,
 		},
 		"valid": {
 			Config: &KubeControllerManager{
-				KubernetesCACertificate:  nonEmptyString,
-				KubernetesCAKey:          nonEmptyString,
-				ServiceAccountPrivateKey: nonEmptyString,
-				APIServer:                nonEmptyString,
-				ClientCertificate:        nonEmptyString,
-				ClientKey:                nonEmptyString,
-				RootCACertificate:        nonEmptyString,
+				KubernetesCAKey:          types.PrivateKey(pki.PrivateKey),
+				ServiceAccountPrivateKey: types.PrivateKey(pki.PrivateKey),
+				RootCACertificate:        types.Certificate(pki.Certificate),
 				Host:                     hostConfig,
+				Kubeconfig:               kubeconfig,
+				Common:                   common,
 			},
 			Error: false,
 		},
@@ -148,24 +110,33 @@ func TestKubeControllerManagerValidate(t *testing.T) {
 		c := c
 
 		t.Run(n, func(t *testing.T) {
-			if err := c.Config.Validate(); !c.Error && err != nil {
-				t.Errorf("Didn't expect error, got: %v", err)
+			err := c.Config.Validate()
+			if !c.Error && err != nil {
+				t.Errorf("didn't expect error, got: %v", err)
+			}
+
+			if c.Error && err == nil {
+				t.Errorf("expected error")
 			}
 		})
 	}
 }
 
-func TestKubeControllerManagerNewFillImage(t *testing.T) {
+func TestKubeControllerManagerToHostConfiguredContainer(t *testing.T) {
+	pki := utiltest.GeneratePKI(t)
+
 	kcm := &KubeControllerManager{
-		KubernetesCACertificate:  nonEmptyString,
-		KubernetesCAKey:          nonEmptyString,
-		ServiceAccountPrivateKey: nonEmptyString,
-		APIServer:                nonEmptyString,
-		ClientCertificate:        nonEmptyString,
-		ClientKey:                nonEmptyString,
-		RootCACertificate:        nonEmptyString,
+		KubernetesCAKey:          types.PrivateKey(pki.PrivateKey),
+		ServiceAccountPrivateKey: types.PrivateKey(pki.PrivateKey),
+		RootCACertificate:        types.Certificate(pki.Certificate),
 		Host: &host.Host{
 			DirectConfig: &direct.Config{},
+		},
+		Kubeconfig: client.Config{
+			Server:            "localhost",
+			CACertificate:     types.Certificate(pki.Certificate),
+			ClientCertificate: types.Certificate(pki.Certificate),
+			ClientKey:         types.PrivateKey(pki.PrivateKey),
 		},
 	}
 
@@ -174,30 +145,30 @@ func TestKubeControllerManagerNewFillImage(t *testing.T) {
 		t.Fatalf("new should not return error, got: %v", err)
 	}
 
-	if o.image == "" {
+	hcc, err := o.ToHostConfiguredContainer()
+	if err != nil {
+		t.Fatalf("Generating HostConfiguredContainer should work, got: %v", err)
+	}
+
+	if _, err := hcc.New(); err != nil {
+		t.Fatalf("ToHostConfiguredContainer() should generate valid HostConfiguredContainer, got: %v", err)
+	}
+
+	if hcc.Container.Config.Image == "" {
 		t.Fatalf("New() should set default image if it's not present")
 	}
 }
 
-func TestKubeControllerManagerToHostConfiguredContainer(t *testing.T) {
-	kcm := &KubeControllerManager{
-		KubernetesCACertificate:  nonEmptyString,
-		KubernetesCAKey:          nonEmptyString,
-		ServiceAccountPrivateKey: nonEmptyString,
-		APIServer:                nonEmptyString,
-		ClientCertificate:        nonEmptyString,
-		ClientKey:                nonEmptyString,
-		RootCACertificate:        nonEmptyString,
-		Host: &host.Host{
-			DirectConfig: &direct.Config{},
-		},
+// New() tests.
+func TestKubeControllerManagerNewEmptyHost(t *testing.T) {
+	ks := &KubeControllerManager{}
+
+	k, err := ks.New()
+	if err == nil {
+		t.Errorf("attempting to create kube-scheduler from empty config should fail")
 	}
 
-	o, err := kcm.New()
-	if err != nil {
-		t.Fatalf("new should not return error, got: %v", err)
+	if k != nil {
+		t.Fatalf("failed attempt of creating kube-scheduler should not return kube-scheduler object")
 	}
-
-	// TODO grab an object and perform some validation on it?
-	o.ToHostConfiguredContainer()
 }

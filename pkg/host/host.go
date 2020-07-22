@@ -1,8 +1,11 @@
+// Package host collects all transport interface implementations and provides an
+// unified configuration interface for these.
 package host
 
 import (
 	"fmt"
 
+	"github.com/flexkube/libflexkube/internal/util"
 	"github.com/flexkube/libflexkube/pkg/host/transport"
 	"github.com/flexkube/libflexkube/pkg/host/transport/direct"
 	"github.com/flexkube/libflexkube/pkg/host/transport/ssh"
@@ -10,73 +13,113 @@ import (
 
 // Host allows to forward TCP ports, UNIX sockets to local machine to establish
 // communication with remote daemons.
+//
+// Exactly one transport method must be configured.
 type Host struct {
-	DirectConfig *direct.Config `json:"direct,omitempty" yaml:"direct,omitempty"`
-	SSHConfig    *ssh.Config    `json:"ssh,omitempty" yaml:"ssh,omitempty"`
+	// DirectConfig indicates, that no forwarding should occur, so addresses will
+	// be returned as given.
+	DirectConfig *direct.Config `json:"direct,omitempty"`
+
+	// SSHConfig configures given addresses to be forwarded using SSH tunneling.
+	SSHConfig *ssh.Config `json:"ssh,omitempty"`
 }
 
 type host struct {
-	transportConfig transport.Config
+	transport transport.Interface
 }
 
 type hostConnected struct {
-	transport transport.Transport
+	transport transport.Connected
 }
 
-// New validates Host configuration and sets configured transport method
-func New(h *Host) (*host, error) {
+// New validates Host configuration and sets configured transport method.
+func (h *Host) New() (transport.Interface, error) {
 	if err := h.Validate(); err != nil {
 		return nil, fmt.Errorf("host configuration validation failed: %w", err)
 	}
 
 	// TODO that seems ugly, is there a better way to generalize it?
-	var t transport.Config
+	var t transport.Interface
 
 	if h.DirectConfig != nil {
-		t = h.DirectConfig
+		t, _ = h.DirectConfig.New()
 	}
 
 	if h.SSHConfig != nil {
-		t = h.SSHConfig
+		t, _ = h.SSHConfig.New()
 	}
 
 	return &host{
-		transportConfig: t,
+		transport: t,
 	}, nil
 }
 
-// Validate validates host configuration
+// Validate validates host configuration.
 func (h *Host) Validate() error {
+	var errors util.ValidateError
+
 	if err := h.DirectConfig.Validate(); err != nil {
-		return fmt.Errorf("direct config validation failed: %w", err)
+		errors = append(errors, fmt.Errorf("direct config validation failed: %w", err))
 	}
 
 	if h.DirectConfig != nil && h.SSHConfig != nil {
-		return fmt.Errorf("host must have only one transport method defined")
+		errors = append(errors, fmt.Errorf("host must have only one transport method defined"))
 	}
 
 	if h.DirectConfig == nil && h.SSHConfig == nil {
-		return fmt.Errorf("host must have transport method defined")
+		errors = append(errors, fmt.Errorf("host must have transport method defined"))
 	}
 
-	return nil
+	if h.SSHConfig != nil {
+		if err := h.SSHConfig.Validate(); err != nil {
+			errors = append(errors, fmt.Errorf("host ssh config invalid: %w", err))
+		}
+	}
+
+	return errors.Return()
 }
 
-// selectTransport returns transport protocol configured for container
+// selectTransport returns transport protocol configured for container.
 //
-// It returns error if transport protocol configuration is invalid
-func (h *host) Connect() (*hostConnected, error) {
-	d, err := h.transportConfig.New()
+// It returns error if transport protocol configuration is invalid.
+func (h *host) Connect() (transport.Connected, error) {
+	c, err := h.transport.Connect()
 	if err != nil {
-		return nil, fmt.Errorf("selecting transport protocol failed: %w", err)
+		return nil, fmt.Errorf("connecting failed: %w", err)
 	}
 
 	return &hostConnected{
-		transport: d,
+		transport: c,
 	}, nil
 }
 
-// ForwardUnixSocket forwards given unix socket path using configured transport method
+// ForwardUnixSocket forwards given unix socket path using configured transport method and returns
+// local unix socket address.
 func (h *hostConnected) ForwardUnixSocket(path string) (string, error) {
 	return h.transport.ForwardUnixSocket(path)
+}
+
+// ForwardTCP forwards given TCP address using configured transport method and returns local
+// address with port.
+func (h *hostConnected) ForwardTCP(address string) (string, error) {
+	return h.transport.ForwardTCP(address)
+}
+
+// BuildConfig merges values from both host objects. This is a helper method used for building hierarchical
+// configuration.
+func BuildConfig(config, defaults Host) Host {
+	// If config has no direct config configured or has SSH config configured, build SSH configuration.
+	if (config.DirectConfig == nil && defaults.SSHConfig != nil) || config.SSHConfig != nil {
+		config.SSHConfig = ssh.BuildConfig(config.SSHConfig, defaults.SSHConfig)
+	}
+
+	// If config has nothing configured and default has no SSH configuration configured,
+	// return direct config as a default.
+	if config.DirectConfig == nil && config.SSHConfig == nil && defaults.SSHConfig == nil {
+		return Host{
+			DirectConfig: &direct.Config{},
+		}
+	}
+
+	return config
 }

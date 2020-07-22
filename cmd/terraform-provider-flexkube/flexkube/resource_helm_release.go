@@ -1,8 +1,9 @@
 package flexkube
 
 import (
+	"github.com/hashicorp/terraform-plugin-sdk/helper/schema"
+
 	"github.com/flexkube/libflexkube/pkg/helm/release"
-	"github.com/hashicorp/terraform/helper/schema"
 )
 
 func resourceHelmRelease() *schema.Resource {
@@ -13,8 +14,9 @@ func resourceHelmRelease() *schema.Resource {
 		Update: resourceHelmReleaseCreate,
 		Schema: map[string]*schema.Schema{
 			"kubeconfig": {
-				Type:     schema.TypeString,
-				Required: true,
+				Type:      schema.TypeString,
+				Required:  true,
+				Sensitive: true,
 			},
 			"namespace": {
 				Type:     schema.TypeString,
@@ -29,15 +31,20 @@ func resourceHelmRelease() *schema.Resource {
 				Required: true,
 			},
 			"values": {
-				Type:     schema.TypeString,
+				Type:      schema.TypeString,
+				Optional:  true,
+				Sensitive: true,
+			},
+			"create_namespace": {
+				Type:     schema.TypeBool,
 				Optional: true,
 			},
 		},
 	}
 }
 
-func resourceHelmReleaseCreate(d *schema.ResourceData, m interface{}) error {
-	r := release.Release{
+func getRelease(d *schema.ResourceData, m interface{}) (release.Release, error) {
+	r := release.Config{
 		Kubeconfig: d.Get("kubeconfig").(string),
 		Namespace:  d.Get("namespace").(string),
 		Name:       d.Get("name").(string),
@@ -46,7 +53,19 @@ func resourceHelmReleaseCreate(d *schema.ResourceData, m interface{}) error {
 		Version:    ">0.0.0-0",
 	}
 
-	release, err := r.New()
+	if v, ok := d.GetOk("create_namespace"); ok {
+		r.CreateNamespace = v.(bool)
+	}
+
+	l := m.(*meta)
+	l.helmClientLock.Lock()
+	defer l.helmClientLock.Unlock()
+
+	return r.New()
+}
+
+func resourceHelmReleaseCreate(d *schema.ResourceData, m interface{}) error {
+	release, err := getRelease(d, m)
 	if err != nil {
 		return err
 	}
@@ -62,16 +81,7 @@ func resourceHelmReleaseCreate(d *schema.ResourceData, m interface{}) error {
 }
 
 func resourceHelmReleaseRead(d *schema.ResourceData, m interface{}) error {
-	r := release.Release{
-		Kubeconfig: d.Get("kubeconfig").(string),
-		Namespace:  d.Get("namespace").(string),
-		Name:       d.Get("name").(string),
-		Chart:      d.Get("chart").(string),
-		Values:     d.Get("values").(string),
-		Version:    ">0.0.0-0",
-	}
-
-	release, err := r.New()
+	release, err := getRelease(d, m)
 	if err != nil {
 		return err
 	}
@@ -92,16 +102,7 @@ func resourceHelmReleaseRead(d *schema.ResourceData, m interface{}) error {
 }
 
 func resourceHelmReleaseDelete(d *schema.ResourceData, m interface{}) error {
-	r := release.Release{
-		Kubeconfig: d.Get("kubeconfig").(string),
-		Namespace:  d.Get("namespace").(string),
-		Name:       d.Get("name").(string),
-		Chart:      d.Get("chart").(string),
-		Values:     d.Get("values").(string),
-		Version:    ">0.0.0-0",
-	}
-
-	release, err := r.New()
+	release, err := getRelease(d, m)
 	if err != nil {
 		return err
 	}

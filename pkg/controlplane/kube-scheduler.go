@@ -1,49 +1,42 @@
 package controlplane
 
 import (
-	"encoding/base64"
 	"fmt"
 
 	"github.com/flexkube/libflexkube/pkg/container"
 	"github.com/flexkube/libflexkube/pkg/container/runtime/docker"
-	"github.com/flexkube/libflexkube/pkg/container/types"
-	"github.com/flexkube/libflexkube/pkg/defaults"
+	containertypes "github.com/flexkube/libflexkube/pkg/container/types"
 	"github.com/flexkube/libflexkube/pkg/host"
+	"github.com/flexkube/libflexkube/pkg/kubernetes/client"
 )
 
-// KubeScheduler represents kube-scheduler configuration data
+// KubeScheduler represents kube-scheduler configuration data.
 type KubeScheduler struct {
-	Image                   string     `json:"image,omitempty" yaml:"image,omitempty"`
-	Host                    *host.Host `json:"host,omitempty" yaml:"host,omitempty"`
-	KubernetesCACertificate string     `json:"kubernetesCACertificate,omitempty" yaml:"kubernetesCACertificate,omitempty"`
-	APIServer               string     `json:"apiServer,omitempty" yaml:"apiServer,omitempty"`
-	// TODO don't take the admin key, use dedicated certificate for static controller manager,
-	// which will have a group + create a binding to system:kube-controller-manager clusterRole
-	// as done in self-hosted chart.
-	// TODO since we have access to CA cert and key, we could generate certificate ourselves here
-	ClientCertificate       string `json:"clientCertificate,omitempty" yaml:"clientCertificate,omitempty"`
-	ClientKey               string `json:"clientKey,omitempty" yaml:"clientKey,omitempty"`
-	FrontProxyCACertificate string `json:"frontProxyCACertificate,omitempty" yaml:"frontProxyCACertificate,omitempty"`
+	// Common stores common information between all controlplane components.
+	Common *Common `json:"common,omitempty"`
+
+	// Host defines on which host kube-scheduler container should be created.
+	Host *host.Host `json:"host,omitempty"`
+
+	// Kubeconfig stores client information used by kube-scheduler to talk to
+	// Kubernetes API.
+	Kubeconfig client.Config `json:"kubeconfig"`
 }
 
-// kubeScheduler is validated and usable version of KubeScheduler
+// kubeScheduler is validated and usable version of KubeScheduler.
 type kubeScheduler struct {
-	image                   string
-	host                    host.Host
-	kubernetesCACertificate string
-	apiServer               string
-	clientCertificate       string
-	clientKey               string
-	frontProxyCACertificate string
+	common     Common
+	host       host.Host
+	kubeconfig string
 }
 
-// ToHostConfiguredContainer converts kubeScheduler into generic container struct
-func (k *kubeScheduler) ToHostConfiguredContainer() *container.HostConfiguredContainer {
+// ToHostConfiguredContainer converts kubeScheduler into generic container struct.
+func (k *kubeScheduler) ToHostConfiguredContainer() (*container.HostConfiguredContainer, error) {
 	configFiles := make(map[string]string)
 	// TODO put all those path in a single place. Perhaps make them configurable with defaults too
-	configFiles["/etc/kubernetes/kube-scheduler/kubeconfig"] = k.toKubeconfig()
-	configFiles["/etc/kubernetes/kube-scheduler/pki/ca.crt"] = k.kubernetesCACertificate
-	configFiles["/etc/kubernetes/kube-scheduler/pki/front-proxy-ca.crt"] = k.frontProxyCACertificate
+	configFiles["/etc/kubernetes/kube-scheduler/kubeconfig"] = k.kubeconfig
+	configFiles["/etc/kubernetes/kube-scheduler/pki/ca.crt"] = string(k.common.KubernetesCACertificate)
+	configFiles["/etc/kubernetes/kube-scheduler/pki/front-proxy-ca.crt"] = string(k.common.FrontProxyCACertificate)
 	configFiles["/etc/kubernetes/kube-scheduler/kube-scheduler.yaml"] = `apiVersion: kubescheduler.config.k8s.io/v1alpha1
 kind: KubeSchedulerConfiguration
 clientConnection:
@@ -51,14 +44,14 @@ clientConnection:
 `
 
 	c := container.Container{
-		// TODO this is weird. This sets docker as default runtime config
+		// TODO: This is weird. This sets docker as default runtime config.
 		Runtime: container.RuntimeConfig{
-			Docker: &docker.Config{},
+			Docker: docker.DefaultConfig(),
 		},
-		Config: types.ContainerConfig{
+		Config: containertypes.ContainerConfig{
 			Name:  "kube-scheduler",
-			Image: k.image,
-			Mounts: []types.Mount{
+			Image: k.common.GetImage(),
+			Mounts: []containertypes.Mount{
 				{
 					Source: "/etc/kubernetes/kube-scheduler/",
 					Target: "/etc/kubernetes",
@@ -85,82 +78,41 @@ clientConnection:
 		Host:        k.host,
 		ConfigFiles: configFiles,
 		Container:   c,
-	}
+	}, nil
 }
 
-// New validates KubeScheduler struct and returns it's usable version
-func (k *KubeScheduler) New() (*kubeScheduler, error) {
+// New validates KubeScheduler struct and returns it's usable version.
+func (k *KubeScheduler) New() (container.ResourceInstance, error) {
+	if k.Common == nil {
+		k.Common = &Common{}
+	}
+
+	if k.Host == nil {
+		k.Host = &host.Host{}
+	}
+
 	if err := k.Validate(); err != nil {
 		return nil, fmt.Errorf("failed to validate Kubernetes Scheduler configuration: %w", err)
 	}
 
-	nk := &kubeScheduler{
-		image:                   k.Image,
-		host:                    *k.Host,
-		kubernetesCACertificate: k.KubernetesCACertificate,
-		apiServer:               k.APIServer,
-		clientCertificate:       k.ClientCertificate,
-		clientKey:               k.ClientKey,
-		frontProxyCACertificate: k.FrontProxyCACertificate,
-	}
+	// It's fine to skip the error, Validate() will handle it.
+	kubeconfig, _ := k.Kubeconfig.ToYAMLString()
 
-	// The only optional parameter
-	if nk.image == "" {
-		nk.image = defaults.KubernetesImage
-	}
-
-	return nk, nil
+	return &kubeScheduler{
+		common:     *k.Common,
+		host:       *k.Host,
+		kubeconfig: kubeconfig,
+	}, nil
 }
 
-// Validate valides kube-scheduler configuration
-//
-// TODO add validation of certificates if specified
+// Validate validates kube-scheduler configuration.
 func (k *KubeScheduler) Validate() error {
-	if k.KubernetesCACertificate == "" {
-		return fmt.Errorf("field kubernetesCACertificate is empty")
+	v := validator{
+		Common:     k.Common,
+		Host:       k.Host,
+		Kubeconfig: k.Kubeconfig,
+		YAML:       k,
 	}
 
-	if k.APIServer == "" {
-		return fmt.Errorf("field apiServer is empty")
-	}
-
-	if k.ClientCertificate == "" {
-		return fmt.Errorf("field clientCertificate is empty")
-	}
-
-	if k.ClientKey == "" {
-		return fmt.Errorf("field clientKey is empty")
-	}
-
-	if k.FrontProxyCACertificate == "" {
-		return fmt.Errorf("field frontProxyCACertificate is empty")
-	}
-
-	return nil
-}
-
-// toKubeconfig takes given configuration and returns kubeconfig file content for
-// kube-scheduler in YAML format
-//
-// TODO this is quite generic, refactor it
-func (k *kubeScheduler) toKubeconfig() string {
-	return fmt.Sprintf(`apiVersion: v1
-kind: Config
-clusters:
-- name: static
-  cluster:
-    server: https://%s:6443
-    certificate-authority-data: %s
-users:
-- name: static
-  user:
-    client-certificate-data: %s
-    client-key-data: %s
-current-context: static
-contexts:
-- name: static
-  context:
-    cluster: static
-    user: static
-`, k.apiServer, base64.StdEncoding.EncodeToString([]byte(k.kubernetesCACertificate)), base64.StdEncoding.EncodeToString([]byte(k.clientCertificate)), base64.StdEncoding.EncodeToString([]byte(k.clientKey)))
+	return v.validate(true)
 }

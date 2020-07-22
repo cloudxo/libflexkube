@@ -1,7 +1,10 @@
+// Package direct is a transport.Interface implementation, which simply
+// forwards given addresses "as is", without any modifications.
 package direct
 
 import (
 	"fmt"
+	"net"
 
 	"github.com/flexkube/libflexkube/pkg/host/transport"
 )
@@ -9,17 +12,16 @@ import (
 // Config represents host configuration for direct communication.
 //
 // Using this struct will use local network and local filesystem.
-type Config struct{}
+type Config struct {
+	// Dummy field is only user for testing.
+	Dummy string `json:"-"`
+}
 
 // direct is a initialized struct, which satisfies Transport interface.
 type direct struct{}
 
 // New may in the future validate direct configuration.
-func (c *Config) New() (transport.Transport, error) {
-	if err := c.Validate(); err != nil {
-		return nil, fmt.Errorf("direct host validation failed: %w", err)
-	}
-
+func (c *Config) New() (transport.Interface, error) {
 	return &direct{}, nil
 }
 
@@ -39,4 +41,17 @@ func (c *Config) Validate() error {
 // etc to fail early?
 func (d *direct) ForwardUnixSocket(path string) (string, error) {
 	return path, nil
+}
+
+// Connect implements Transport interface.
+func (d *direct) Connect() (transport.Connected, error) {
+	return d, nil
+}
+
+func (d *direct) ForwardTCP(address string) (string, error) {
+	if _, _, err := net.SplitHostPort(address); err != nil {
+		return "", fmt.Errorf("failed to validate address '%s': %w", address, err)
+	}
+
+	return address, nil
 }
